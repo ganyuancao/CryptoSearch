@@ -67,6 +67,8 @@ CRYPTO_VENUES = {
     "ct-rsa": "RSA",
     "cryptographers track at the rsa conference": "RSA",
     "cic": "CiC",
+    "iacr cic": "CiC",
+    "iacr communications in cryptology": "CiC",
     "dcc": "DCC",
     "fc": "FC",
     "financial cryptography": "FC",
@@ -175,22 +177,30 @@ def is_crypto_hit(info: dict) -> bool:
 
 
 def venue_label(info: dict) -> str:
-    venue = (
-        info.get("venue")
-        or info.get("journal")
-        or info.get("booktitle")
-        or ""
-    )
+    # Pick venue from DBLP
+    venue = info.get("venue") or info.get("journal") or info.get("booktitle") or ""
     norm = normalize_venue(venue)
 
     # Absolute priority: ePrint
     if "eprint" in norm:
         return "EPRINT"
 
-    for k, v in CRYPTO_VENUES.items():
-        if k in norm:
+    # Normalize whitelist keys
+    norm_keys = [(normalize_venue(k), v) for k, v in CRYPTO_VENUES.items()]
+
+    # Sort by length descending to match longest first
+    norm_keys.sort(key=lambda kv: len(kv[0]), reverse=True)
+
+    for k_norm, v in norm_keys:
+        if k_norm in norm:
             return v
-    raise ValueError("Venue not Cryptobib-legal")
+    
+    if "communic" in norm and "cryptol" in norm:
+        return "CiC"
+
+    # Debug info if nothing matches
+    print(f"DEBUG: venue='{venue}', norm='{norm}'", file=sys.stderr)
+    raise ValueError(f"Venue not Cryptobib-legal: {venue}")
 
 
 # ----------------------------------------------------------------------
@@ -239,57 +249,55 @@ def split_authors(value: str) -> list[str]:
 # ----------------------------------------------------------------------
 
 def format_author(name: str) -> str:
-    """
-    Format name as 'Last, First' if possible.
-    Handles 'First von Last' and braces.
-    """
+    """Format name as 'Last, First', handling particles and braces."""
     name = re.sub(r"\s+", " ", name).strip()
     if "," in name:
         return re.sub(r"\s*,\s*", ", ", name)
 
-    parts = _split_on_spaces(name)
+    parts = name.split()
     if len(parts) <= 1:
         return name
 
     idx = len(parts) - 1
     while idx > 0:
         cand = re.sub(r"[{}]", "", parts[idx - 1])
-        if cand and (cand[0].islower() or cand.lower() in AUTHOR_PARTICLES):
+        if cand and cand[0].islower():
             idx -= 1
         else:
             break
+
     last = " ".join(parts[idx:])
     first = " ".join(parts[:idx])
     return f"{last}, {first}" if first else last
 
-# ----------------------------------------------------------------------
-# Normalize to ASCII (remove accents, umlauts, etc.)
-# ----------------------------------------------------------------------
-
 def ascii_normalize(s: str) -> str:
-    # NFKD decomposition then filter ASCII letters
+    """Normalize accents and diacritics to ASCII."""
     s = unicodedata.normalize('NFKD', s)
-    s = "".join(c for c in s if c.isascii())
-    return s
+    return "".join(c for c in s if c.isascii())
 
 # ----------------------------------------------------------------------
 # Generate Cryptobib author label
 # ----------------------------------------------------------------------
 
 def author_label(authors: list[str]) -> str:
+    """Generate Cryptobib author label from a list of author names."""
     lasts = []
     for a in authors:
-        # format last name properly
         last = format_author(a).split(",", 1)[0]
-        # remove braces
+
+        # remove braces, but keep letters inside
         last = last.replace("{", "").replace("}", "")
-        # normalize accents/diacritics
-        last = unicodedata.normalize("NFKD", last)
-        # keep only ASCII letters
-        last = "".join(c for c in last if c.isalpha() and c.isascii())
+
+        # normalize diacritics
+        last = ascii_normalize(last)
+
+        # keep letters only
+        last = "".join(c for c in last if c.isalpha())
+
         # fallback if empty
         if not last:
             last = "X"
+
         lasts.append(last)
 
     n = len(lasts)
