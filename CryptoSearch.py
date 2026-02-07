@@ -18,33 +18,79 @@ MAX_HITS = 10
 # ----------------------------------------------------------------------
 
 CRYPTO_VENUES = {
-    # Conferences
+    # Major IACR conferences
     "crypto": "C",
     "eurocrypt": "EC",
     "asiacrypt": "AC",
     "tcc": "TCC",
+    "ches": "CHES",
     "fse": "FSE",
     "pkc": "PKC",
-    "ches": "CHES",
-    "sac": "SAC",
-    "ndss": "NDSS",
-    "ccs": "CCS",
-    "ieee symposium on security and privacy": "SP",
-    "usenix security symposium": "USENIX",
-    "esorics": "ESORICS",
-    "fc": "FC",
-    "pets": "PETS",
-    "popets": "PoPETS",
-    "itcs": "ITCS",
-    "stoc": "STOC",
-    "focs": "FOCS",
-    "soda": "SODA",
 
-    # Journals
+    # IACR journals / archives
+    "iacr cryptology eprint archive": "EPRINT",
+    "transactions on cryptographic hardware and embedded systems": "TCHES",
+    "transactions on symmetric cryptology": "ToSC",
     "journal of cryptology": "JC",
 
-    # Archive
-    "cryptology eprint archive": "EPRINT",
+    # Security conferences
+    "acm conference on computer and communications security": "CCS",
+    "acm ccs": "CCS",
+    "ndss": "NDSS",
+    "ieee symposium on security and privacy": "SP",
+    "ieee s&p": "SP",
+    "usenix security symposium": "USENIX",
+    "esorics": "ESORICS",
+    "computer security foundations": "CSF",
+
+    # Theory conferences
+    "stoc": "STOC",
+    "focs": "FOCS",
+    "itcs": "ITCS",
+    "soda": "SODA",
+    "icalp": "ICALP",
+    "podc": "PODC",
+    "latin": "LATIN",
+
+    # Regional / specialized crypto conferences
+    "acisp": "ACISP",
+    "africacrypt": "AFRICACRYPT",
+    "acns": "ACNS",
+    "asiaccs": "ASIACCS",
+    "cans": "CANS",
+    "cosade": "COSADE",
+    "cqre": "CQRE",
+    "ct-rsa": "RSA",
+    "cryptographers track at the rsa conference": "RSA",
+    "cic": "CiC",
+    "dcc": "DCC",
+    "fc": "FC",
+    "financial cryptography": "FC",
+    "fcw": "FCW",
+    "icics": "ICICS",
+    "icisc": "ICISC",
+    "icits": "ICITS",
+    "ieee european symposium on security and privacy": "EUROSP",
+    "ieee eurosp": "EUROSP",
+    "ima international conference on cryptography and coding": "IMA",
+    "indocrypt": "INDOCRYPT",
+    "isc": "ISC",
+    "itc": "ITC",
+    "iwsec": "IWSEC",
+    "latincrypt": "LC",
+    "ndss symposium": "NDSS",
+    "pairing": "PAIRING",
+    "pets": "PETS",
+    "privacy enhancing technologies symposium": "PETS",
+    "popets": "PoPETS",
+    "pqcrypto": "PQCRYPTO",
+    "provsec": "PROVSEC",
+    "sac": "SAC",
+    "selected areas in cryptography": "SAC",
+    "scn": "SCN",
+    "trustbus": "TRUSTBUS",
+    "vietcrypt": "VIETCRYPT",
+    "wisa": "WISA",
 }
 
 AUTHOR_PARTICLES = {
@@ -263,17 +309,17 @@ def choose_hit(hits: list[dict]) -> dict:
 
 def main():
     if len(sys.argv) < 2:
-        print('Usage: python3 CryptoSearch.py "Paper Title"', file=sys.stderr)
+        print('Usage: cryptobib_key.py "Paper Title"', file=sys.stderr)
         sys.exit(1)
 
     title = " ".join(sys.argv[1:])
     hits = search_hits(title)
     if not hits:
-        print("No CryptoBib-Valid Entry Found.", file=sys.stderr)
+        print("No Cryptobib-valid entry found.", file=sys.stderr)
         sys.exit(1)
 
     chosen = choose_hit(hits)
-    key = cryptobib_key(chosen["Info"])
+    key = cryptobib_key(chosen["info"])
     print(key)
 
 
