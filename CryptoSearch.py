@@ -68,6 +68,7 @@ CRYPTO_VENUES = {
     "cryptographers track at the rsa conference": "RSA",
     "cic": "CiC",
     "iacr cic": "CiC",
+    "iacr commun. cryptol.": "CiC",
     "iacr communications in cryptology": "CiC",
     "dcc": "DCC",
     "fc": "FC",
@@ -181,21 +182,33 @@ def venue_label(info: dict) -> str:
     venue = info.get("venue") or info.get("journal") or info.get("booktitle") or ""
     norm = normalize_venue(venue)
 
-    # Absolute priority: ePrint
+    # 1. Absolute priority: ePrint
     if "eprint" in norm:
         return "EPRINT"
+    
+    # 2. High priority: Communications in Cryptology (CiC)
+    # This must come before the "crypto" conference check to avoid false positives.
+    if ("communic" in norm or "cic" in norm) and ("cryptol" in norm or "cryptog" in norm):
+        return "CiC"
 
-    # Normalize whitelist keys
+    # 3. Standard Whitelist check
+    # Normalize whitelist keys and sort by length descending to match longest phrases first
     norm_keys = [(normalize_venue(k), v) for k, v in CRYPTO_VENUES.items()]
-
-    # Sort by length descending to match longest first
     norm_keys.sort(key=lambda kv: len(kv[0]), reverse=True)
 
     for k_norm, v in norm_keys:
+        # Avoid "crypto" matching "cryptology" journals incorrectly
+        if k_norm == "crypto":
+            # Only match "crypto" if it's the specific conference name
+            if "advances in cryptology" in norm and "crypto" in norm:
+                return "C"
+            continue 
+            
         if k_norm in norm:
             return v
-    
-    if "communic" in norm and "cryptol" in norm:
+
+    # Fallback for other CiC variants
+    if "cic" in norm:
         return "CiC"
 
     # Debug info if nothing matches
