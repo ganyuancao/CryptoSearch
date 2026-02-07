@@ -6,6 +6,7 @@ Find Cryptobib citation keys from DBLP by paper title.
 import curses
 import json
 import re
+import unicodedata
 import sys
 import textwrap
 import urllib.parse
@@ -34,8 +35,11 @@ CRYPTO_VENUES = {
     "journal of cryptology": "JC",
 
     # Security conferences
+    "ccs": "CCS",
     "acm conference on computer and communications security": "CCS",
     "acm ccs": "CCS",
+    "acm conference on computer & communications security": "CCS",
+    "acm conference on computer and comm. security": "CCS",
     "ndss": "NDSS",
     "ieee symposium on security and privacy": "SP",
     "ieee s&p": "SP",
@@ -97,6 +101,7 @@ AUTHOR_PARTICLES = {
     "da", "de", "del", "della", "di", "do", "dos",
     "du", "la", "le", "van", "der", "den", "ter", "von",
 }
+
 
 # ----------------------------------------------------------------------
 # HTTP / DBLP
@@ -189,7 +194,7 @@ def venue_label(info: dict) -> str:
 
 
 # ----------------------------------------------------------------------
-# Author parsing
+# Split author strings safely, respecting braces
 # ----------------------------------------------------------------------
 
 def _split_on_spaces(value: str) -> list[str]:
@@ -229,14 +234,23 @@ def split_authors(value: str) -> list[str]:
         authors.append("".join(buf).strip())
     return authors
 
+# ----------------------------------------------------------------------
+# Name formatting
+# ----------------------------------------------------------------------
 
 def format_author(name: str) -> str:
+    """
+    Format name as 'Last, First' if possible.
+    Handles 'First von Last' and braces.
+    """
     name = re.sub(r"\s+", " ", name).strip()
     if "," in name:
         return re.sub(r"\s*,\s*", ", ", name)
+
     parts = _split_on_spaces(name)
     if len(parts) <= 1:
         return name
+
     idx = len(parts) - 1
     while idx > 0:
         cand = re.sub(r"[{}]", "", parts[idx - 1])
@@ -248,19 +262,43 @@ def format_author(name: str) -> str:
     first = " ".join(parts[:idx])
     return f"{last}, {first}" if first else last
 
+# ----------------------------------------------------------------------
+# Normalize to ASCII (remove accents, umlauts, etc.)
+# ----------------------------------------------------------------------
+
+def ascii_normalize(s: str) -> str:
+    # NFKD decomposition then filter ASCII letters
+    s = unicodedata.normalize('NFKD', s)
+    s = "".join(c for c in s if c.isascii())
+    return s
+
+# ----------------------------------------------------------------------
+# Generate Cryptobib author label
+# ----------------------------------------------------------------------
 
 def author_label(authors: list[str]) -> str:
     lasts = []
     for a in authors:
+        # format last name properly
         last = format_author(a).split(",", 1)[0]
-        last = re.sub(r"[{}\-]", "", last)
+        # remove braces
+        last = last.replace("{", "").replace("}", "")
+        # normalize accents/diacritics
+        last = unicodedata.normalize("NFKD", last)
+        # keep only ASCII letters
+        last = "".join(c for c in last if c.isalpha() and c.isascii())
+        # fallback if empty
+        if not last:
+            last = "X"
         lasts.append(last)
 
-    if len(lasts) == 1:
+    n = len(lasts)
+    if n == 1:
         return lasts[0]
-    if len(lasts) <= 3:
-        return "".join(n[:3] for n in lasts)
-    return "".join(n[0] for n in lasts[:6])
+    elif n <= 3:
+        return "".join(l[:3] for l in lasts)
+    else:
+        return "".join(l[0] for l in lasts[:6])
 
 
 # ----------------------------------------------------------------------
