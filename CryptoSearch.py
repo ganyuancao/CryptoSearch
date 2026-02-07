@@ -262,7 +262,10 @@ def split_authors(value: str) -> list[str]:
 # ----------------------------------------------------------------------
 
 def format_author(name: str) -> str:
-    """Format name as 'Last, First', handling particles and braces."""
+    """Format name as 'Last, First', handling DBLP numbers and particles."""
+    # 1. Strip DBLP disambiguation numbers (e.g., "Yu Yu 0001" -> "Yu Yu")
+    name = re.sub(r"\s+\d+$", "", name)
+    
     name = re.sub(r"\s+", " ", name).strip()
     if "," in name:
         return re.sub(r"\s*,\s*", ", ", name)
@@ -271,6 +274,7 @@ def format_author(name: str) -> str:
     if len(parts) <= 1:
         return name
 
+    # Search backwards for the start of the last name (handling particles like 'von')
     idx = len(parts) - 1
     while idx > 0:
         cand = re.sub(r"[{}]", "", parts[idx - 1])
