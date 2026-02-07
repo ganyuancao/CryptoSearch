@@ -4,7 +4,11 @@
 ### How to use
 1, Search for the entries in dblp
 ```
-python3 CryptoSearch.py "title (or part of the title)"
+python3 CryptoSearch.py [title (or part of the title)]
+
+python3 CryptoSearch.py [author name] [year]
+
+python3 CryptoSearch.py "full_title" // this should always work
 ```
 
 2, Make your selection. 
