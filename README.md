@@ -10,3 +10,6 @@ python3 CryptoSearch.py "title (or part of the title)"
 2, Make your selection. 
 
 3, Get the output.
+
+### Disclaimer
+The script is modified from https://github.com/mmaker/dblp/tree/main
