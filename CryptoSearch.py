@@ -115,10 +115,35 @@ def search_hits(title: str) -> list[dict]:
     query = urllib.parse.quote_plus(title)
     url = f"https://dblp.org/search/publ/api?q={query}&format=json&h={MAX_HITS}"
     data = json.loads(http_get(url))
+
     hits = data.get("result", {}).get("hits", {}).get("hit") or []
     if isinstance(hits, dict):
         hits = [hits]
-    return [h for h in hits if is_crypto_hit(h.get("info", {}))]
+
+    crypto_hits = []
+    for h in hits:
+        info = h.get("info", {})
+        if not is_crypto_hit(info):
+            continue
+        crypto_hits.append(h)
+
+    def is_eprint(h):
+        info = h.get("info", {})
+        venue = (
+            info.get("venue")
+            or info.get("journal")
+            or info.get("booktitle")
+            or ""
+        )
+        norm = normalize_venue(venue)
+        return "eprint" in norm
+
+    # Stable ordering:
+    #   1. Non-ePrint first
+    #   2. ePrint last
+    crypto_hits.sort(key=lambda h: is_eprint(h))
+
+    return crypto_hits
 
 
 # ----------------------------------------------------------------------
@@ -152,6 +177,11 @@ def venue_label(info: dict) -> str:
         or ""
     )
     norm = normalize_venue(venue)
+
+    # Absolute priority: ePrint
+    if "eprint" in norm:
+        return "EPRINT"
+
     for k, v in CRYPTO_VENUES.items():
         if k in norm:
             return v
