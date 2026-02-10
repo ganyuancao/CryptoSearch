@@ -413,7 +413,7 @@ def main():
 
     chosen = choose_hit(hits)
     key = cryptobib_key(chosen["info"])
-    print(key)
+    print("\n" + key + "\n")
 
 
 if __name__ == "__main__":
