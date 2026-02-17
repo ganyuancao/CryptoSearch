@@ -33,6 +33,19 @@ CRYPTO_VENUES = {
     "transactions on cryptographic hardware and embedded systems": "TCHES",
     "transactions on symmetric cryptology": "ToSC",
     "journal of cryptology": "JC",
+    "j. cryptol.": "JC",
+
+    # IACR journals / archives (with common abbreviations)
+    "journal of cryptology": "JC",
+    "j cryptol": "JC", 
+    "iacr cryptology eprint archive": "EPRINT",
+    "cryptology eprint archive": "EPRINT",
+    "transactions on cryptographic hardware and embedded systems": "TCHES",
+    "tches": "TCHES",
+    "iacr trans cryptogr hardw embed syst": "TCHES",
+    "transactions on symmetric cryptology": "ToSC",
+    "tosc": "ToSC",
+    "iacr trans symmetric cryptol": "ToSC",
 
     # Security conferences
     "ccs": "CCS",
@@ -160,6 +173,7 @@ def search_hits(title: str) -> list[dict]:
 
 def normalize_venue(s: str) -> str:
     s = re.sub(r"[{}]", "", s)
+    s = s.replace(".", "")  # Strip periods to handle abbreviations like J. Cryptol.
     s = re.sub(r"\s+", " ", s)
     return s.lower().strip()
 
@@ -186,25 +200,43 @@ def venue_label(info: dict) -> str:
     if "eprint" in norm:
         return "EPRINT"
     
-    # 2. High priority: Communications in Cryptology (CiC)
-    # This must come before the "crypto" conference check to avoid false positives.
+    # 2. High priority: CRYPTO Conference (Strict Check)
+    # This prevents "Journal of Cryptology" from being called "C"
+    if norm == "crypto" or "advances in cryptology" in norm and "crypto" in norm:
+        # But wait! If it also says TCHES, it's TCHES.
+        if "tches" not in norm and "hardware" not in norm:
+            return "C"
+
+    # 3. High priority: Communications in Cryptology (CiC)
     if ("communic" in norm or "cic" in norm) and ("cryptol" in norm or "cryptog" in norm):
         return "CiC"
 
-    # 3. Standard Whitelist check
-    # Normalize whitelist keys and sort by length descending to match longest phrases first
+    # 4. Create a map of common DBLP short-codes to Cryptobib labels
+    # This fixes "J. Cryptol." and "TCHES" specifically.
+    exact_matches = {
+        "j cryptol": "JC",
+        "tches": "TCHES",
+        "tosc": "ToSC",
+        "crypto": "C",
+        "eurocrypt": "EC",
+        "asiacrypt": "AC",
+    }
+    
+    if norm in exact_matches:
+        return exact_matches[norm]
+
+    # 5. Standard Whitelist check (Longest match first)
     norm_keys = [(normalize_venue(k), v) for k, v in CRYPTO_VENUES.items()]
     norm_keys.sort(key=lambda kv: len(kv[0]), reverse=True)
 
     for k_norm, v in norm_keys:
-        # Avoid "crypto" matching "cryptology" journals incorrectly
+        # We already handled 'crypto' above
         if k_norm == "crypto":
-            # Only match "crypto" if it's the specific conference name
-            if "advances in cryptology" in norm and "crypto" in norm:
-                return "C"
             continue 
             
-        if k_norm in norm:
+        # Check if our whitelist key is in the DBLP string 
+        # OR if the DBLP string is an abbreviation of our whitelist key
+        if k_norm in norm or (len(norm) > 3 and norm in k_norm):
             return v
 
     # Fallback for other CiC variants
