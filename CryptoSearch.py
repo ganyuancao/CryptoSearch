@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Find Cryptobib citation keys from DBLP by paper title.
+Includes venue debugging and "domain" (publication type) checks.
 """
 
 import curses
@@ -30,15 +31,6 @@ CRYPTO_VENUES = {
 
     # IACR journals / archives
     "iacr cryptology eprint archive": "EPRINT",
-    "transactions on cryptographic hardware and embedded systems": "TCHES",
-    "transactions on symmetric cryptology": "ToSC",
-    "journal of cryptology": "JC",
-    "j. cryptol.": "JC",
-
-    # IACR journals / archives (with common abbreviations)
-    "journal of cryptology": "JC",
-    "j cryptol": "JC", 
-    "iacr cryptology eprint archive": "EPRINT",
     "cryptology eprint archive": "EPRINT",
     "transactions on cryptographic hardware and embedded systems": "TCHES",
     "tches": "TCHES",
@@ -46,13 +38,16 @@ CRYPTO_VENUES = {
     "transactions on symmetric cryptology": "ToSC",
     "tosc": "ToSC",
     "iacr trans symmetric cryptol": "ToSC",
+    "journal of cryptology": "JC",
+    "j cryptol": "JC",
+    "iacr communications in cryptology": "CiC",
+    "iacr commun cryptol": "CiC",
+    "cic": "CiC",
 
     # Security conferences
     "ccs": "CCS",
     "acm conference on computer and communications security": "CCS",
     "acm ccs": "CCS",
-    "acm conference on computer & communications security": "CCS",
-    "acm conference on computer and comm. security": "CCS",
     "ndss": "NDSS",
     "ieee symposium on security and privacy": "SP",
     "ieee s&p": "SP",
@@ -69,7 +64,7 @@ CRYPTO_VENUES = {
     "podc": "PODC",
     "latin": "LATIN",
 
-    # Regional / specialized crypto conferences
+    # Regional / specialized
     "acisp": "ACISP",
     "africacrypt": "AFRICACRYPT",
     "acns": "ACNS",
@@ -79,10 +74,6 @@ CRYPTO_VENUES = {
     "cqre": "CQRE",
     "ct-rsa": "RSA",
     "cryptographers track at the rsa conference": "RSA",
-    "cic": "CiC",
-    "iacr cic": "CiC",
-    "iacr commun. cryptol.": "CiC",
-    "iacr communications in cryptology": "CiC",
     "dcc": "DCC",
     "fc": "FC",
     "financial cryptography": "FC",
@@ -98,7 +89,6 @@ CRYPTO_VENUES = {
     "itc": "ITC",
     "iwsec": "IWSEC",
     "latincrypt": "LC",
-    "ndss symposium": "NDSS",
     "pairing": "PAIRING",
     "pets": "PETS",
     "privacy enhancing technologies symposium": "PETS",
@@ -113,288 +103,134 @@ CRYPTO_VENUES = {
     "wisa": "WISA",
 }
 
-AUTHOR_PARTICLES = {
-    "da", "de", "del", "della", "di", "do", "dos",
-    "du", "la", "le", "van", "der", "den", "ter", "von",
-}
-
+SORTED_VENUE_KEYS = sorted(CRYPTO_VENUES.keys(), key=len, reverse=True)
 
 # ----------------------------------------------------------------------
-# HTTP / DBLP
-# ----------------------------------------------------------------------
-
-def http_get(url: str) -> str:
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "cryptobib-key/0.1"}
-    )
-    with urllib.request.urlopen(req) as resp:
-        charset = resp.headers.get_content_charset() or "utf-8"
-        return resp.read().decode(charset)
-
-
-def search_hits(title: str) -> list[dict]:
-    query = urllib.parse.quote_plus(title)
-    url = f"https://dblp.org/search/publ/api?q={query}&format=json&h={MAX_HITS}"
-    data = json.loads(http_get(url))
-
-    hits = data.get("result", {}).get("hits", {}).get("hit") or []
-    if isinstance(hits, dict):
-        hits = [hits]
-
-    crypto_hits = []
-    for h in hits:
-        info = h.get("info", {})
-        if not is_crypto_hit(info):
-            continue
-        crypto_hits.append(h)
-
-    def is_eprint(h):
-        info = h.get("info", {})
-        venue = (
-            info.get("venue")
-            or info.get("journal")
-            or info.get("booktitle")
-            or ""
-        )
-        norm = normalize_venue(venue)
-        return "eprint" in norm
-
-    # Stable ordering:
-    #   1. Non-ePrint first
-    #   2. ePrint last
-    crypto_hits.sort(key=lambda h: is_eprint(h))
-
-    return crypto_hits
-
-
-# ----------------------------------------------------------------------
-# Venue filtering
+# Helpers
 # ----------------------------------------------------------------------
 
 def normalize_venue(s: str) -> str:
     s = re.sub(r"[{}]", "", s)
-    s = s.replace(".", "")  # Strip periods to handle abbreviations like J. Cryptol.
-    s = re.sub(r"\s+", " ", s)
-    return s.lower().strip()
-
-
-def is_crypto_hit(info: dict) -> bool:
-    venue = (
-        info.get("venue")
-        or info.get("journal")
-        or info.get("booktitle")
-        or ""
-    )
-    if not venue:
-        return False
-    norm = normalize_venue(venue)
-    return any(k in norm for k in CRYPTO_VENUES)
-
-
-def venue_label(info: dict) -> str:
-    # Pick venue from DBLP
-    venue = info.get("venue") or info.get("journal") or info.get("booktitle") or ""
-    norm = normalize_venue(venue)
-
-    # 1. Absolute priority: ePrint
-    if "eprint" in norm:
-        return "EPRINT"
-    
-    # 2. High priority: CRYPTO Conference (Strict Check)
-    # This prevents "Journal of Cryptology" from being called "C"
-    if norm == "crypto" or "advances in cryptology" in norm and "crypto" in norm:
-        # But wait! If it also says TCHES, it's TCHES.
-        if "tches" not in norm and "hardware" not in norm:
-            return "C"
-
-    # 3. High priority: Communications in Cryptology (CiC)
-    if ("communic" in norm or "cic" in norm) and ("cryptol" in norm or "cryptog" in norm):
-        return "CiC"
-
-    # 4. Create a map of common DBLP short-codes to Cryptobib labels
-    # This fixes "J. Cryptol." and "TCHES" specifically.
-    exact_matches = {
-        "j cryptol": "JC",
-        "tches": "TCHES",
-        "tosc": "ToSC",
-        "crypto": "C",
-        "eurocrypt": "EC",
-        "asiacrypt": "AC",
-    }
-    
-    if norm in exact_matches:
-        return exact_matches[norm]
-
-    # 5. Standard Whitelist check (Longest match first)
-    norm_keys = [(normalize_venue(k), v) for k, v in CRYPTO_VENUES.items()]
-    norm_keys.sort(key=lambda kv: len(kv[0]), reverse=True)
-
-    for k_norm, v in norm_keys:
-        # We already handled 'crypto' above
-        if k_norm == "crypto":
-            continue 
-            
-        # Check if our whitelist key is in the DBLP string 
-        # OR if the DBLP string is an abbreviation of our whitelist key
-        if k_norm in norm or (len(norm) > 3 and norm in k_norm):
-            return v
-
-    # Fallback for other CiC variants
-    if "cic" in norm:
-        return "CiC"
-
-    # Debug info if nothing matches
-    print(f"DEBUG: venue='{venue}', norm='{norm}'", file=sys.stderr)
-    raise ValueError(f"Venue not Cryptobib-legal: {venue}")
-
-
-# ----------------------------------------------------------------------
-# Split author strings safely, respecting braces
-# ----------------------------------------------------------------------
-
-def _split_on_spaces(value: str) -> list[str]:
-    tokens, buf, depth = [], [], 0
-    for c in value:
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth = max(0, depth - 1)
-        if c.isspace() and depth == 0:
-            if buf:
-                tokens.append("".join(buf))
-                buf = []
-        else:
-            buf.append(c)
-    if buf:
-        tokens.append("".join(buf))
-    return tokens
-
-
-def split_authors(value: str) -> list[str]:
-    value = re.sub(r"\s+", " ", value).strip()
-    authors, buf, depth, i = [], [], 0, 0
-    while i < len(value):
-        if value[i] == "{":
-            depth += 1
-        elif value[i] == "}":
-            depth = max(0, depth - 1)
-        if depth == 0 and value[i:i+5].lower() == " and ":
-            authors.append("".join(buf).strip())
-            buf = []
-            i += 5
-            continue
-        buf.append(value[i])
-        i += 1
-    if buf:
-        authors.append("".join(buf).strip())
-    return authors
-
-# ----------------------------------------------------------------------
-# Name formatting
-# ----------------------------------------------------------------------
-
-def format_author(name: str) -> str:
-    """Format name as 'Last, First', handling DBLP numbers and particles."""
-    # 1. Strip DBLP disambiguation numbers (e.g., "Yu Yu 0001" -> "Yu Yu")
-    name = re.sub(r"\s+\d+$", "", name)
-    
-    name = re.sub(r"\s+", " ", name).strip()
-    if "," in name:
-        return re.sub(r"\s*,\s*", ", ", name)
-
-    parts = name.split()
-    if len(parts) <= 1:
-        return name
-
-    # Search backwards for the start of the last name (handling particles like 'von')
-    idx = len(parts) - 1
-    while idx > 0:
-        cand = re.sub(r"[{}]", "", parts[idx - 1])
-        if cand and cand[0].islower():
-            idx -= 1
-        else:
-            break
-
-    last = " ".join(parts[idx:])
-    first = " ".join(parts[:idx])
-    return f"{last}, {first}" if first else last
+    s = s.replace(".", "")
+    return re.sub(r"\s+", " ", s).lower().strip()
 
 def ascii_normalize(s: str) -> str:
-    """Normalize accents and diacritics to ASCII."""
     s = unicodedata.normalize('NFKD', s)
     return "".join(c for c in s if c.isascii())
 
+def http_get(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "cryptobib-key/0.1"})
+    with urllib.request.urlopen(req) as resp:
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return resp.read().decode(charset)
+
 # ----------------------------------------------------------------------
-# Generate Cryptobib author label
+# Logic
 # ----------------------------------------------------------------------
 
+def venue_label(info: dict) -> str:
+    """Map DBLP venue to Cryptobib label with debug reporting."""
+    venue = info.get("venue") or info.get("journal") or info.get("booktitle") or ""
+    norm = normalize_venue(venue)
+
+    if not norm:
+        raise ValueError("Venue field is empty in DBLP entry.")
+
+    # 1. ePrint check
+    if "eprint" in norm:
+        return "EPRINT"
+    
+    # 2. Match against whitelist
+    for key in SORTED_VENUE_KEYS:
+        if key in norm or (len(norm) > 3 and norm == key):
+            return CRYPTO_VENUES[key]
+
+    # --- Debugging Point ---
+    # This helps you see exactly why a venue didn't match
+    print(f"\n[DEBUG] Domain/Type: {info.get('type')}", file=sys.stderr)
+    print(f"[DEBUG] Raw Venue:   '{venue}'", file=sys.stderr)
+    print(f"[DEBUG] Norm Venue:  '{norm}'", file=sys.stderr)
+    raise ValueError(f"Venue not in Cryptobib whitelist: {venue}")
+
+def format_author(name: str) -> str:
+    name = re.sub(r"\s+\d+$", "", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    if "," in name: return re.sub(r"\s*,\s*", ", ", name)
+
+    parts = name.split()
+    if len(parts) <= 1: return name
+
+    idx = len(parts) - 1
+    while idx > 0:
+        cand = parts[idx - 1].replace("{", "").replace("}", "")
+        if cand and cand[0].islower(): idx -= 1
+        else: break
+
+    last, first = " ".join(parts[idx:]), " ".join(parts[:idx])
+    return f"{last}, {first}" if first else last
+
 def author_label(authors: list[str]) -> str:
-    """Generate Cryptobib author label from a list of author names."""
     lasts = []
     for a in authors:
         last = format_author(a).split(",", 1)[0]
-
-        # remove braces, but keep letters inside
-        last = last.replace("{", "").replace("}", "")
-
-        # normalize diacritics
-        last = ascii_normalize(last)
-
-        # keep letters only
-        last = "".join(c for c in last if c.isalpha())
-
-        # fallback if empty
-        if not last:
-            last = "X"
-
+        last = ascii_normalize(last.replace("{", "").replace("}", ""))
+        last = "".join(c for c in last if c.isalpha()) or "X"
         lasts.append(last)
 
     n = len(lasts)
-    if n == 1:
-        return lasts[0]
-    elif n <= 3:
-        return "".join(l[:3] for l in lasts)
-    else:
-        return "".join(l[0] for l in lasts[:6])
-
-
-# ----------------------------------------------------------------------
-# Cryptobib key
-# ----------------------------------------------------------------------
+    if n == 1: return lasts[0]
+    if n <= 3: return "".join(l[:3] for l in lasts)
+    return "".join(l[0] for l in lasts[:6])
 
 def cryptobib_key(info: dict) -> str:
     authors_raw = info.get("authors", {}).get("author")
-    if not authors_raw:
-        raise ValueError("Missing authors")
+    if not authors_raw: raise ValueError("Missing authors")
 
-    if isinstance(authors_raw, list):
-        names = [a["text"] for a in authors_raw]
-    else:
-        names = [authors_raw["text"]]
-
-    a_label = author_label(names)
+    names = [a["text"] for a in (authors_raw if isinstance(authors_raw, list) else [authors_raw])]
     year = info.get("year")
-    if not year:
-        raise ValueError("Missing year")
+    if not year: raise ValueError("Missing year")
 
-    v_label = venue_label(info)
-    return f"{v_label}:{a_label}{year[-2:]}"
-
+    return f"{venue_label(info)}:{author_label(names)}{year[-2:]}"
 
 # ----------------------------------------------------------------------
-# UI
+# Search & UI
 # ----------------------------------------------------------------------
+
+def search_hits(title: str) -> list[dict]:
+    query = urllib.parse.quote_plus(title)
+    url = f"https://dblp.org/search/publ/api?q={query}&format=json&h={MAX_HITS}"
+    try:
+        data = json.loads(http_get(url))
+    except Exception as e:
+        print(f"Network Error: {e}", file=sys.stderr)
+        return []
+
+    hits = data.get("result", {}).get("hits", {}).get("hit") or []
+    if isinstance(hits, dict): hits = [hits]
+
+    # Pre-filter for crypto relevance to save time
+    crypto_hits = []
+    for h in hits:
+        info = h.get("info", {})
+        venue = info.get("venue") or info.get("journal") or info.get("booktitle") or ""
+        if any(k in normalize_venue(venue) for k in CRYPTO_VENUES):
+            crypto_hits.append(h)
+
+    # Sort: Proceedings (Non-ePrint) first
+    crypto_hits.sort(key=lambda h: "eprint" in normalize_venue(h['info'].get('venue', '')))
+    return crypto_hits
 
 def describe_hit(info: dict) -> str:
-    venue = info.get("venue") or info.get("journal") or ""
-    return f"{venue} {info.get('year', '')}: {info.get('title', '')}"
-
+    """Helper to format the selection line with 'domain' (type) info."""
+    v = info.get("venue") or info.get("journal") or "Unknown Venue"
+    y = info.get("year", "????")
+    t = info.get("title", "No Title")
+    d = info.get("type", "Misc") # This is the "domain=" check
+    return f" {v} ({y}): {t}"
 
 def choose_hit(hits: list[dict]) -> dict:
     if len(hits) == 1:
         return hits[0]
-
-    descs = [describe_hit(h["info"]) for h in hits]
 
     def selector(stdscr):
         curses.curs_set(0)
@@ -402,51 +238,47 @@ def choose_hit(hits: list[dict]) -> dict:
         while True:
             stdscr.clear()
             h, w = stdscr.getmaxyx()
-            stdscr.addstr(0, 0, "Select Cryptobib entry:")
-            for i, d in enumerate(descs):
-                if i + 1 >= h:
-                    break
-                line = textwrap.shorten(d, w - 4, placeholder="...")
+            stdscr.addstr(0, 0, "Select Entry (Arrows to move, Enter to select, 'q' to quit):", curses.A_BOLD)
+            
+            for i, hit in enumerate(hits):
+                if i + 1 >= h: break
+                line = textwrap.shorten(describe_hit(hit["info"]), w - 4, placeholder="...")
                 attr = curses.A_REVERSE if i == idx else curses.A_NORMAL
                 stdscr.addstr(i + 1, 0, ("> " if i == idx else "  ") + line, attr)
+            
             k = stdscr.getch()
-            if k in (curses.KEY_UP, ord("k")):
-                idx = (idx - 1) % len(hits)
-            elif k in (curses.KEY_DOWN, ord("j")):
-                idx = (idx + 1) % len(hits)
-            elif k in (10, 13):
-                return hits[idx]
-            elif k in (27, ord("q")):
-                raise KeyboardInterrupt
+            if k in (curses.KEY_UP, ord("k")): idx = (idx - 1) % len(hits)
+            elif k in (curses.KEY_DOWN, ord("j")): idx = (idx + 1) % len(hits)
+            elif k in (10, 13): return hits[idx]
+            elif k in (27, ord("q")): raise KeyboardInterrupt
 
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    if sys.stdin.isatty():
         return curses.wrapper(selector)
-
-    # fallback
-    for i, d in enumerate(descs, 1):
-        print(f"{i}. {d}")
-    return hits[int(input("Select: ")) - 1]
-
-
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
+    
+    for i, h in enumerate(hits, 1):
+        print(f"{i}. {describe_hit(h['info'])}")
+    return hits[int(input("Select number: ")) - 1]
 
 def main():
     if len(sys.argv) < 2:
         print('Usage: cryptobib_key.py "Paper Title"', file=sys.stderr)
         sys.exit(1)
 
-    title = " ".join(sys.argv[1:])
-    hits = search_hits(title)
+    hits = search_hits(" ".join(sys.argv[1:]))
     if not hits:
-        print("No Cryptobib-valid entry found.", file=sys.stderr)
+        print("No Cryptobib-valid entries found on DBLP.", file=sys.stderr)
         sys.exit(1)
 
-    chosen = choose_hit(hits)
-    key = cryptobib_key(chosen["info"])
-    print("\n" + key + "\n")
-
+    try:
+        chosen = choose_hit(hits)
+        key = cryptobib_key(chosen['info'])
+        print(f"\n{key}\n")
+    except ValueError as ve:
+        print(f"\n[ERROR] {ve}", file=sys.stderr)
+        sys.exit(1)
+    except (KeyboardInterrupt, SystemExit):
+        print("\nOperation cancelled.")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
