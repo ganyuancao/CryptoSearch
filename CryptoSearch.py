@@ -25,8 +25,11 @@ CRYPTO_VENUES = {
     "eurocrypt": "EC",
     "asiacrypt": "AC",
     "tcc": "TCC",
+    "Theory of Cryptography Conference": "TCC",
     "ches": "CHES",
+    "Conference on Cryptographic Hardware and Embedded Systems": "CHES",
     "fse": "FSE",
+    "Fast Software Encryption": "FSE",
     "pkc": "PKC",
     "Public Key Cryptography": "PKC",
 
