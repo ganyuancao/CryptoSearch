@@ -28,6 +28,7 @@ CRYPTO_VENUES = {
     "ches": "CHES",
     "fse": "FSE",
     "pkc": "PKC",
+    "Public Key Cryptography": "PKC",
 
     # IACR journals / archives
     "iacr cryptology eprint archive": "EPRINT",
