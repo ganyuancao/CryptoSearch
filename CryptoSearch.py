@@ -186,6 +186,7 @@ def venue_label(info: dict) -> str:
             return CRYPTO_VENUES[key]
     raise ValueError(f"Venue not in whitelist: {venue}")
 
+"""
 def format_author_for_key(name: str) -> str:
     name = clean_name(name)
     parts = name.split()
@@ -197,26 +198,115 @@ def format_author_for_key(name: str) -> str:
         else: break
     last, first = " ".join(parts[idx:]), " ".join(parts[:idx])
     return f"{last}, {first}" if first else last
+"""
 
-def author_label(authors: list[str]) -> str:
+def extract_last_name(author_entry: dict) -> str:
+    """
+    Extract correct family name from DBLP author entry.
+    Uses structured 'family' field if present.
+    Falls back to heuristic only if necessary.
+    """
+    # Structured DBLP format (preferred)
+    if "family" in author_entry:
+        return author_entry["family"]
+
+    # Fallback to text parsing
+    name = clean_name(author_entry.get("text", ""))
+    parts = name.split()
+    if not parts:
+        return "X"
+
+    # Heuristic: assume everything after first given name belongs to surname
+    # (works better for Spanish-style names)
+    if len(parts) >= 2:
+        return " ".join(parts[1:])
+    return parts[0]
+
+def author_label(author_entries: list[dict]) -> str:
     lasts = []
-    for a in authors:
-        last = format_author_for_key(a).split(",", 1)[0]
-        last = ascii_normalize(last.replace("{", "").replace("}", ""))
+    for a in author_entries:
+        last = extract_last_name(a)
+        last = ascii_normalize(last)
         last = "".join(c for c in last if c.isalpha()) or "X"
         lasts.append(last)
+
     n = len(lasts)
-    if n == 1: return lasts[0]
-    if n <= 3: return "".join(l[:3] for l in lasts)
+    if n == 1:
+        return lasts[0]
+    if n <= 3:
+        return "".join(l[:3] for l in lasts)
     return "".join(l[0] for l in lasts[:6])
+
 
 def cryptobib_key(info: dict) -> str:
     authors_raw = info.get("authors", {}).get("author")
-    if not authors_raw: raise ValueError("Missing authors")
-    names = [a["text"] for a in (authors_raw if isinstance(authors_raw, list) else [authors_raw])]
+    if not authors_raw:
+        raise ValueError("Missing authors")
+
+    author_entries = (
+        authors_raw if isinstance(authors_raw, list)
+        else [authors_raw]
+    )
+
     year = info.get("year")
-    if not year: raise ValueError("Missing year")
-    return f"{venue_label(info)}:{author_label(names)}{year[-2:]}"
+    if not year:
+        raise ValueError("Missing year")
+
+    return f"{venue_label(info)}:{author_label(author_entries)}{year[-2:]}"
+
+
+def resolve_year_collision(base_key: str, info: dict) -> str:
+    """
+    Only add suffix (a, b, c, ...) if multiple distinct papers
+    would generate the exact same base_key.
+    """
+
+    year = info.get("year")
+    if not year:
+        return base_key
+
+    authors_raw = info.get("authors", {}).get("author")
+    if not authors_raw:
+        return base_key
+
+    author_entries = authors_raw if isinstance(authors_raw, list) else [authors_raw]
+    first_last = ascii_normalize(extract_last_name(author_entries[0]))
+
+    # Search broadly by first author + year
+    query = urllib.parse.quote_plus(f"{first_last} {year}")
+    url = f"https://dblp.org/search/publ/api?q={query}&format=json&h=200"
+
+    try:
+        data = json.loads(http_get(url))
+    except:
+        return base_key
+
+    hits = data.get("result", {}).get("hits", {}).get("hit") or []
+    if isinstance(hits, dict):
+        hits = [hits]
+
+    # Collect papers that produce the SAME base key
+    same_key_papers = []
+
+    for h in hits:
+        i = h.get("info", {})
+        try:
+            if cryptobib_key(i) == base_key:
+                same_key_papers.append(i)
+        except:
+            continue
+
+    if len(same_key_papers) <= 1:
+        return base_key
+
+    # Preserve DBLP ordering
+    for idx, paper in enumerate(same_key_papers):
+        if paper.get("doi") == info.get("doi"):
+            return base_key + chr(ord('a') + idx)
+        if paper.get("title") == info.get("title"):
+            return base_key + chr(ord('a') + idx)
+
+    return base_key
 
 # ----------------------------------------------------------------------
 # Search & UI
@@ -284,7 +374,8 @@ def main():
         chosen = choose_hit(hits)
         info = chosen['info']
         
-        key = cryptobib_key(info)
+        base = cryptobib_key(info)
+        key = resolve_year_collision(base, info)
         citation = build_full_citation(info)
         
         print(f"\n[{key}]\n")
