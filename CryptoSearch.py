@@ -203,24 +203,34 @@ def format_author_for_key(name: str) -> str:
 def extract_last_name(author_entry: dict) -> str:
     """
     Extract correct family name from DBLP author entry.
-    Uses structured 'family' field if present.
-    Falls back to heuristic only if necessary.
+    Ignores middle initials to find the true surname.
     """
-    # Structured DBLP format (preferred)
+    # 1. Use DBLP's structured 'family' field if it exists
     if "family" in author_entry:
         return author_entry["family"]
 
-    # Fallback to text parsing
+    # 2. Clean the name (remove DBLP trailing digits)
     name = clean_name(author_entry.get("text", ""))
     parts = name.split()
+    
     if not parts:
         return "X"
+    if len(parts) == 1:
+        return parts[0]
 
-    # Heuristic: assume everything after first given name belongs to surname
-    # (works better for Spanish-style names)
-    if len(parts) >= 2:
-        return " ".join(parts[1:])
-    return parts[0]
+    # 3. Improved Heuristic:
+    # Skip the first name (parts[0]) and look for the first part 
+    # that isn't a middle initial (e.g., "J.", "A.", or "A").
+    for i in range(1, len(parts)):
+        cand = parts[i].replace(".", "")
+        # If the part is longer than 1 character, it's likely the 
+        # start of the surname (e.g., "Bernstein" or "García")
+        if len(cand) > 1:
+            return " ".join(parts[i:])
+            
+    # 4. Fallback: if everything after the first name was initials, 
+    # just return the last part.
+    return parts[-1]
 
 def author_label(author_entries: list[dict]) -> str:
     lasts = []
