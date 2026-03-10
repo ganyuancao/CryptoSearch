@@ -202,35 +202,40 @@ def format_author_for_key(name: str) -> str:
 
 def extract_last_name(author_entry: dict) -> str:
     """
-    Extract correct family name from DBLP author entry.
-    Ignores middle initials to find the true surname.
+    Extracts the family name while handling middle initials and 
+    compound surnames (Spanish 'y', 'de', or German 'von').
     """
-    # 1. Use DBLP's structured 'family' field if it exists
+    # 1. ALWAYS trust DBLP's structured 'family' field if it exists
     if "family" in author_entry:
         return author_entry["family"]
 
-    # 2. Clean the name (remove DBLP trailing digits)
+    # 2. Clean and split the name
     name = clean_name(author_entry.get("text", ""))
     parts = name.split()
-    
-    if not parts:
-        return "X"
-    if len(parts) == 1:
-        return parts[0]
+    if not parts: return "X"
+    if len(parts) == 1: return parts[0]
 
-    # 3. Improved Heuristic:
-    # Skip the first name (parts[0]) and look for the first part 
-    # that isn't a middle initial (e.g., "J.", "A.", or "A").
+    # Particles often found in Spanish/European surnames
+    particles = {"de", "la", "las", "y", "del", "los", "von", "van", "der"}
+
+    # 3. Find the "Starting Point" of the surname
+    # We skip the first name (parts[0]) and any subsequent parts that 
+    # look like initials (e.g., "J.", "A", "B.")
+    surname_start_idx = 1
     for i in range(1, len(parts)):
-        cand = parts[i].replace(".", "")
-        # If the part is longer than 1 character, it's likely the 
-        # start of the surname (e.g., "Bernstein" or "García")
-        if len(cand) > 1:
-            return " ".join(parts[i:])
-            
-    # 4. Fallback: if everything after the first name was initials, 
-    # just return the last part.
-    return parts[-1]
+        clean_part = parts[i].replace(".", "")
+        # If the part is longer than 1 character and isn't a known particle,
+        # it's likely the start of the surname (e.g., "Bernstein").
+        # If it IS a particle (like "de"), the surname starts there.
+        if len(clean_part) > 1 or clean_part.lower() in particles:
+            surname_start_idx = i
+            break
+    
+    # 4. Join everything from the start point to the end
+    # For "Daniel J. Bernstein" -> returns "Bernstein"
+    # For "Juan García López" -> returns "García López"
+    # For "Vincent van Rijmen" -> returns "van Rijmen"
+    return " ".join(parts[surname_start_idx:])
 
 def author_label(author_entries: list[dict]) -> str:
     lasts = []
