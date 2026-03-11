@@ -186,71 +186,89 @@ def venue_label(info: dict) -> str:
             return CRYPTO_VENUES[key]
     raise ValueError(f"Venue not in whitelist: {venue}")
 
-"""
-def format_author_for_key(name: str) -> str:
-    name = clean_name(name)
-    parts = name.split()
-    if len(parts) <= 1: return name
-    idx = len(parts) - 1
-    while idx > 0:
-        cand = parts[idx - 1].replace("{", "").replace("}", "")
-        if cand and cand[0].islower(): idx -= 1
-        else: break
-    last, first = " ".join(parts[idx:]), " ".join(parts[:idx])
-    return f"{last}, {first}" if first else last
-"""
+def is_initial(s: str) -> bool:
+    """True if string is an initial like 'J' or 'J.'"""
+    clean = s.replace(".", "")
+    return len(clean) == 1
 
-def extract_last_name(author_entry: dict) -> str:
+def extract_last_name_parts(author_entry: dict) -> tuple[str, str]:
     """
-    Extracts the family name while handling middle initials and 
-    compound surnames (Spanish 'y', 'de', or German 'von').
+    Intelligently identifies surnames. 
+    Handles:
+    - Spanish double surnames: 'Manterola Ayala' -> ('', 'Manterola Ayala')
+    - Middle initials: 'Daniel J. Bernstein' -> ('', 'Bernstein')
+    - Particles: 'von Gleissenthall' -> ('von', 'Gleissenthall')
     """
-    # 1. ALWAYS trust DBLP's structured 'family' field if it exists
     if "family" in author_entry:
-        return author_entry["family"]
+        full_surname = author_entry["family"]
+    else:
+        name = clean_name(author_entry.get("text", ""))
+        parts = name.split()
+        if not parts: return "", "X"
+        if len(parts) == 1: return "", parts[0]
 
-    # 2. Clean and split the name
-    name = clean_name(author_entry.get("text", ""))
-    parts = name.split()
-    if not parts: return "X"
-    if len(parts) == 1: return parts[0]
+        particles = {"von", "van", "de", "del", "der", "da", "di", "y"}
+        
+        # 1. Check if the second-to-last word is a particle (von, de, y)
+        if parts[-2].lower() in particles:
+            # Check if there's an even earlier particle (e.g., 'de la Cruz')
+            if len(parts) > 3 and parts[-3].lower() in particles:
+                full_surname = " ".join(parts[-3:])
+            else:
+                full_surname = " ".join(parts[-2:])
+        
+        # 2. Check if the second-to-last word is an INITIAL (Daniel J. Bernstein)
+        elif is_initial(parts[-2]):
+            full_surname = parts[-1]
+            
+        # 3. Compound/Spanish Case (Irati Manterola Ayala)
+        # If there are 3+ words and the middle isn't an initial, assume double surname.
+        elif len(parts) >= 3:
+            full_surname = " ".join(parts[-2:])
+            
+        # 4. Standard Case (Michael Backes)
+        else:
+            full_surname = parts[-1]
 
-    # Particles often found in Spanish/European surnames
-    particles = {"de", "la", "las", "y", "del", "los", "von", "van", "der"}
-
-    # 3. Find the "Starting Point" of the surname
-    # We skip the first name (parts[0]) and any subsequent parts that 
-    # look like initials (e.g., "J.", "A", "B.")
-    surname_start_idx = 1
-    for i in range(1, len(parts)):
-        clean_part = parts[i].replace(".", "")
-        # If the part is longer than 1 character and isn't a known particle,
-        # it's likely the start of the surname (e.g., "Bernstein").
-        # If it IS a particle (like "de"), the surname starts there.
-        if len(clean_part) > 1 or clean_part.lower() in particles:
-            surname_start_idx = i
-            break
+    # Split into (particle, base) for the Key rules
+    particles = {"von", "van", "de", "del", "der", "da", "di", "y"}
+    s_parts = full_surname.split()
     
-    # 4. Join everything from the start point to the end
-    # For "Daniel J. Bernstein" -> returns "Bernstein"
-    # For "Juan García López" -> returns "García López"
-    # For "Vincent van Rijmen" -> returns "van Rijmen"
-    return " ".join(parts[surname_start_idx:])
+    if len(s_parts) > 1 and s_parts[0].lower() in particles:
+        return s_parts[0].lower(), " ".join(s_parts[1:])
+    return "", full_surname
 
 def author_label(author_entries: list[dict]) -> str:
-    lasts = []
-    for a in author_entries:
-        last = extract_last_name(a)
-        last = ascii_normalize(last)
-        last = "".join(c for c in last if c.isalpha()) or "X"
-        lasts.append(last)
-
-    n = len(lasts)
+    n = len(author_entries)
+    processed = [extract_last_name_parts(a) for a in author_entries]
+    
+    # Single Author: Use full normalized surname
     if n == 1:
-        return lasts[0]
+        p, last = processed[0]
+        full = (p + last) if p else last
+        return "".join(c for c in ascii_normalize(full) if c.isalpha())
+
+    # 2 or 3 Authors: 3-character chunks
     if n <= 3:
-        return "".join(l[:3] for l in lasts)
-    return "".join(l[0] for l in lasts[:6])
+        label = ""
+        for particle, surname in processed:
+            # For "Manterola Ayala", surname_clean is "ManterolaAyala"
+            surname_clean = "".join(c for c in ascii_normalize(surname) if c.isalpha())
+            if particle:
+                # Rule: v + St = vSt
+                label += particle[0].lower() + surname_clean[:2]
+            else:
+                # Rule: ManterolaAyala -> Man
+                label += surname_clean[:3]
+        return label
+
+    # 4+ Authors: 1-character initials
+    label = ""
+    for _, surname in processed[:6]:
+        surname_clean = "".join(c for c in ascii_normalize(surname) if c.isalpha())
+        if surname_clean:
+            label += surname_clean[0]
+    return label
 
 
 def cryptobib_key(info: dict) -> str:
@@ -285,7 +303,8 @@ def resolve_year_collision(base_key: str, info: dict) -> str:
         return base_key
 
     author_entries = authors_raw if isinstance(authors_raw, list) else [authors_raw]
-    first_last = ascii_normalize(extract_last_name(author_entries[0]))
+    _, first_last = extract_last_name_parts(author_entries[0])
+    first_last = ascii_normalize(first_last)
 
     # Search broadly by first author + year
     query = urllib.parse.quote_plus(f"{first_last} {year}")
@@ -375,6 +394,11 @@ def choose_hit(hits: list[dict]) -> dict:
     for i, h in enumerate(hits, 1): print(f"{i}. {describe_hit(h['info'])}")
     return hits[int(input("Select number: ")) - 1]
 
+
+
+# ----------------------------------------------------------------------
+# Main 
+# ----------------------------------------------------------------------
 def main():
     if len(sys.argv) < 2:
         print('Usage: cryptobib_key.py "Paper Title"', file=sys.stderr)
