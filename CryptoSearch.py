@@ -177,13 +177,55 @@ def build_full_citation(info: dict) -> str:
 # ----------------------------------------------------------------------
 
 def venue_label(info: dict) -> str:
-    venue = info.get("venue") or info.get("journal") or info.get("booktitle") or ""
+    def is_generic(s: str) -> bool:
+        return "advances in cryptology" in normalize_venue(s)
+
+    # Prefer more precise fields, but skip generic ones if possible
+    candidates = [
+        info.get("booktitle"),
+        info.get("journal"),
+        info.get("venue"),
+    ]
+
+    venue = ""
+    for c in candidates:
+        if c and not is_generic(c):
+            venue = c
+            break
+
+    # fallback if everything was generic
+    if not venue:
+        for c in candidates:
+            if c:
+                venue = c
+                break
+
     norm = normalize_venue(venue)
-    if not norm: raise ValueError("Venue field is empty.")
-    if "eprint" in norm: return "EPRINT"
+    if not norm:
+        raise ValueError("Venue field is empty.")
+
+    if "eprint" in norm:
+        return "EPRINT"
+
+    # --- Strong signals first (avoid crypto swallowing others) ---
+    if "public key cryptography" in norm or "pkc" in norm:
+        return "PKC"
+    if "eurocrypt" in norm:
+        return "EC"
+    if "asiacrypt" in norm:
+        return "AC"
+
+    # --- Original matching (but delay generic "crypto") ---
     for key in SORTED_VENUE_KEYS:
+        if key == "crypto":
+            continue
         if key in norm or (len(norm) > 3 and norm == key):
             return CRYPTO_VENUES[key]
+
+    # --- Handle CRYPTO last ---
+    if "crypto" in norm:
+        return "C"
+
     raise ValueError(f"Venue not in whitelist: {venue}")
 
 def is_initial(s: str) -> bool:
